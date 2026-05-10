@@ -19,7 +19,7 @@ export function PredictionPanel({ recommendation }: PredictionPanelProps) {
     <aside className="panel recommendation-panel">
       <div className="panel-title-row">
         <div>
-          <span className="eyebrow">Pronostic du moteur</span>
+          <span className="eyebrow">Signal probabiliste</span>
           <h3>{recommendation.headline}</h3>
           <p>{recommendation.rationale}</p>
         </div>
@@ -73,10 +73,7 @@ export function PredictionPanel({ recommendation }: PredictionPanelProps) {
       <button type="button" className="button button--full">
         Confirmer ce choix
       </button>
-      <p className="panel-note">
-        Ce bouton confirme l&apos;option sélectionnée. Il ne répète pas le pronostic, il sert à
-        l&apos;acter.
-      </p>
+      <p className="panel-note">Jeu virtuel RNG — signal probabiliste, aucun gain garanti.</p>
     </aside>
   );
 }

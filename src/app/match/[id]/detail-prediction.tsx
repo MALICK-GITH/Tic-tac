@@ -1,7 +1,15 @@
 import type { TicTacToeMatch } from '@/lib/tictactoe-data';
-import { analyzeBoard, extractOddsFromMatch, getGameWinner, getRoundWinners, parseBoards, predictPrematch, predictTicTacToe } from './prediction-engine';
+import { analyzeBoard, analyzeLiveBoard, extractOddsFromMatch, getGameWinner, getRoundWinners, parseBoards, predictPrematch, predictTicTacToe } from './prediction-engine';
 import { brierScore } from './prediction-engine/scoring';
 import type { PredictionOutcome } from './prediction-engine/types';
+import {
+  MatchDashboardTabs,
+  type DashboardMatchSummary,
+  type DashboardMasterSignal,
+  type DashboardRoundView,
+  type DashboardState,
+  type DashboardTab,
+} from './match-dashboard-tabs';
 import styles from './detail-prediction.module.css';
 
 type DetailPredictionProps = {
@@ -122,6 +130,169 @@ function getBookmakerMarginFromPrediction(prediction: ReturnType<typeof predictT
   return `${Math.round(margin * 1000) / 10}%`;
 }
 
+function mapDashboardState(mode: string): DashboardState {
+  if (mode === 'CONFIRMED') return 'FINISHED';
+  if (mode.startsWith('LIVE')) return 'LIVE';
+  return 'PREMATCH';
+}
+
+function formatOutcomeLabel(outcome: PredictionOutcome) {
+  if (outcome === 'V1') return 'V1';
+  if (outcome === 'V2') return 'V2';
+  if (outcome === 'X') return 'X';
+  return 'ATTENDRE';
+}
+
+function getSafetyMargin(probabilities: { V1: number; X: number; V2: number } | null) {
+  if (!probabilities) {
+    return 0;
+  }
+
+  const sorted = [probabilities.V1, probabilities.X, probabilities.V2].sort((a, b) => b - a);
+  const top = sorted[0] ?? 0;
+  const runnerUp = sorted[1] ?? 0;
+
+  return Math.round((top - runnerUp) * 100);
+}
+
+function getChoiceLabel(outcome: PredictionOutcome) {
+  if (outcome === 'V1') return 'Victoire Croisillons';
+  if (outcome === 'V2') return 'Victoire Ronds';
+  if (outcome === 'X') return 'Match nul';
+  return 'ATTENDRE';
+}
+
+function getStateFromBoardStatus(status: ReturnType<typeof analyzeBoard>['status']): DashboardState {
+  if (status === 'WIN' || status === 'DRAW') return 'FINISHED';
+  if (status === 'LIVE') return 'LIVE';
+  return 'PREMATCH';
+}
+
+function getRemainingCells(cells: number[]) {
+  return cells
+    .map((value, index) => ({ value, index }))
+    .filter((cell) => cell.value === 0)
+    .map((cell) => String(cell.index + 1));
+}
+
+function getThreats(cells: number[]) {
+  const lines = [
+    [0, 1, 2],
+    [3, 4, 5],
+    [6, 7, 8],
+    [0, 3, 6],
+    [1, 4, 7],
+    [2, 5, 8],
+    [0, 4, 8],
+    [2, 4, 6],
+  ];
+
+  const threats = new Set<string>();
+
+  lines.forEach((line) => {
+    const values = line.map((index) => cells[index] ?? 0);
+    const v1Count = values.filter((value) => value === 1).length;
+    const v2Count = values.filter((value) => value === 2).length;
+    const emptyCount = values.filter((value) => value === 0).length;
+
+    if (v1Count === 2 && emptyCount === 1) {
+      threats.add(`Menace V1 sur ${line.map((index) => index + 1).join('-')}`);
+    }
+
+    if (v2Count === 2 && emptyCount === 1) {
+      threats.add(`Menace V2 sur ${line.map((index) => index + 1).join('-')}`);
+    }
+  });
+
+  if (threats.size === 0) {
+    threats.add('Aucune menace immédiate');
+  }
+
+  return [...threats];
+}
+
+function getContinuations(cells: number[]) {
+  return getRemainingCells(cells).map((cell) => `Case ${cell}`);
+}
+
+function formatOddsText(odds: { V1: number | null; X: number | null; V2: number | null } | null) {
+  if (!odds) {
+    return '—';
+  }
+
+  const parts = (['V1', 'X', 'V2'] as const).map((key) => `${key} ${formatPrice(odds[key])}`);
+  return parts.join(' · ');
+}
+
+function chooseMasterSignal(candidates: Array<{
+  tab: DashboardTab;
+  source: string;
+  state: DashboardState;
+  prediction: PredictionOutcome;
+  confidence: number;
+  probabilities: { V1: number; X: number; V2: number } | null;
+  riskLevel: string;
+  reason: string;
+  odds: { V1: number | null; X: number | null; V2: number | null } | null;
+}>) {
+  const scored = candidates
+    .map((candidate) => {
+      const safetyMargin = getSafetyMargin(candidate.probabilities);
+      const riskPenalty =
+        candidate.riskLevel === 'CRITICAL'
+          ? 30
+          : candidate.riskLevel === 'HIGH'
+            ? 18
+            : candidate.riskLevel === 'MEDIUM'
+              ? 8
+              : 0;
+      const stateBonus = candidate.state === 'FINISHED' ? 6 : candidate.state === 'LIVE' ? 3 : 0;
+      const score = candidate.confidence + safetyMargin + stateBonus - riskPenalty;
+
+      return {
+        ...candidate,
+        safetyMargin,
+        score,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const best = scored[0];
+  const focusTab =
+    best?.tab === 'MATCH' ? scored.find((candidate) => candidate.tab !== 'MATCH')?.tab ?? 'MATCH' : best.tab;
+
+  if (!best || best.safetyMargin < 8 || best.confidence < 45 || best.riskLevel === 'HIGH' || best.riskLevel === 'CRITICAL') {
+    return {
+      choice: 'ATTENDRE',
+      source: 'Signal trop fragile',
+      sourceTab: focusTab ?? ('MATCH' as DashboardTab),
+      confidence: best ? Math.min(99, best.confidence) : 0,
+      safetyMargin: best?.safetyMargin ?? 0,
+      riskLevel: (best?.riskLevel ?? 'HIGH') as DashboardMasterSignal['riskLevel'],
+      reason: 'Marge trop faible ou risque trop élevé, le système estime qu’il faut attendre.',
+      oddsText: '—',
+      state: best?.state ?? 'PREMATCH',
+      disclaimer: 'Jeu virtuel RNG — signal probabiliste, aucun gain garanti.',
+    };
+  }
+
+  const choice = best.prediction === 'ATTENDRE' ? 'ATTENDRE' : formatOutcomeLabel(best.prediction);
+  const oddsValue = best.prediction === 'ATTENDRE' || !best.odds ? null : best.odds[best.prediction];
+
+  return {
+    choice,
+    source: best.source,
+    sourceTab: focusTab ?? best.tab,
+    confidence: Math.min(99, best.confidence),
+    safetyMargin: best.safetyMargin,
+    riskLevel: best.riskLevel as DashboardMasterSignal['riskLevel'],
+    reason: best.reason,
+    oddsText: oddsValue !== null && oddsValue !== undefined ? formatPrice(oddsValue) : '—',
+    state: best.state,
+    disclaimer: 'Jeu virtuel RNG — signal probabiliste, aucun gain garanti.',
+  };
+}
+
 function computeCalibrationChiSquare(
   samples: Array<{
     prediction: {
@@ -214,6 +385,86 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
   const finalWinner = getGameWinner(getRoundWinners(roundAnalyses));
   const lastBoard = prediction.debug.lastBoard;
   const isLive = prediction.mode !== 'PREMATCH' && prediction.mode !== 'CONFIRMED';
+  const odds = extractOddsFromMatch(match);
+
+  const roundViews: DashboardRoundView[] = roundAnalyses.map((analysis) => {
+    const boardPrediction =
+      analysis.status === 'EMPTY'
+        ? predictPrematch(odds)
+        : analyzeLiveBoard(analysis.cells, odds);
+    const state = getStateFromBoardStatus(analysis.status);
+    const safetyMargin = getSafetyMargin(boardPrediction.probabilities);
+    const remainingCells = getRemainingCells(analysis.cells);
+
+    return {
+      tab: `ROUND ${analysis.roundIndex}` as DashboardTab,
+      roundIndex: analysis.roundIndex,
+      state,
+      board: analysis.cells,
+      stateLabel: state,
+      oddsText: formatOddsText(odds),
+      probabilities: boardPrediction.probabilities,
+      prediction: boardPrediction.prediction,
+      minimaxOutcome: boardPrediction.debug.minimaxOutcome,
+      confidence: boardPrediction.confidence,
+      safetyMargin,
+      riskLevel: boardPrediction.riskLevel,
+      reason: boardPrediction.reason,
+      threats: getThreats(analysis.cells),
+      remainingCells,
+      continuations: getContinuations(analysis.cells),
+      chosenOdds:
+        boardPrediction.prediction !== 'ATTENDRE' && odds?.[boardPrediction.prediction] !== undefined
+          ? formatPrice(odds[boardPrediction.prediction])
+          : '—',
+    };
+  });
+
+  const matchSummary: DashboardMatchSummary = {
+    state: mapDashboardState(prediction.mode),
+    roundScore: roundAnalyses
+      .map((analysis) => {
+        if (analysis.status === 'WIN' && analysis.winner) return analysis.winner;
+        if (analysis.status === 'DRAW') return 'X';
+        return 'ATTENDRE';
+      })
+      .join(' / '),
+    potentialWinner: getWinnerLabel(finalWinner),
+    overallStatus: prediction.mode === 'CONFIRMED' ? 'FINISHED' : mapDashboardState(prediction.mode),
+    roundSummaries: roundViews.map((round) => ({
+      roundIndex: round.roundIndex,
+      state: round.state,
+      choice: formatOutcomeLabel(round.prediction),
+      confidence: round.confidence,
+      riskLevel: round.riskLevel,
+      reason: round.reason,
+    })),
+  };
+
+  const masterSignal = chooseMasterSignal([
+    {
+      tab: 'MATCH',
+      source: 'Match global',
+      state: mapDashboardState(prediction.mode),
+      prediction: prediction.prediction,
+      confidence: prediction.confidence,
+      probabilities: prediction.probabilities,
+      riskLevel: prediction.riskLevel,
+      reason: prediction.reason,
+      odds,
+    },
+    ...roundViews.map((round) => ({
+      tab: round.tab,
+      source: `Round ${round.roundIndex}`,
+      state: round.state,
+      prediction: round.prediction,
+      confidence: round.confidence,
+      probabilities: round.probabilities,
+      riskLevel: round.riskLevel,
+      reason: round.reason,
+      odds,
+    })),
+  ]);
 
   const finishedMatches = allMatches.filter((item) => {
     const winner = getActualWinner(item);
@@ -249,7 +500,6 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
         chiSquareContribution: number;
       }> };
 
-  const odds = extractOddsFromMatch(match);
   const probabilities = prediction.probabilities;
   const riskFlags = prediction.debug.riskFlags;
   const topChoice = prediction.prediction === 'ATTENDRE' ? null : getWinnerLabel(prediction.prediction);
@@ -310,6 +560,23 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
             </div>
           </div>
         </section>
+
+        <MatchDashboardTabs
+          master={{
+            choice: masterSignal.choice,
+            source: masterSignal.source,
+            sourceTab: masterSignal.sourceTab,
+            confidence: masterSignal.confidence,
+            safetyMargin: masterSignal.safetyMargin,
+            riskLevel: masterSignal.riskLevel,
+            reason: masterSignal.reason,
+            oddsText: masterSignal.oddsText,
+            state: masterSignal.state,
+            disclaimer: masterSignal.disclaimer,
+          }}
+          matchSummary={matchSummary}
+          rounds={roundViews}
+        />
 
         <section className={styles.section}>
           <div className={styles.sectionHeader}>

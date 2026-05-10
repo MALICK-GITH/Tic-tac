@@ -293,6 +293,245 @@
   font-size: 0.9rem;
 }
 
+.dashboardShell {
+  display: grid;
+  gap: 14px;
+}
+
+.masterCard {
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.masterHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+}
+
+.masterEyebrow {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(245, 197, 66, 0.12);
+  border: 1px solid rgba(245, 197, 66, 0.24);
+  color: #ffe8a8;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.masterChoice {
+  margin-top: 10px;
+  font-size: 1.22rem;
+}
+
+.masterSource {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.masterStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.masterStat {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.masterStat span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.masterStat strong {
+  font-size: 1rem;
+}
+
+.masterReason,
+.masterDisclaimer {
+  line-height: 1.6;
+}
+
+.masterReason {
+  color: var(--text);
+}
+
+.masterDisclaimer {
+  color: #ffe8a8;
+}
+
+.masterActions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.masterButton {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(67, 209, 125, 0.24);
+  background: rgba(39, 174, 96, 0.1);
+  color: #d8ffe4;
+  cursor: pointer;
+}
+
+.tabRail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tabButton {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.tabButtonActive {
+  border-color: rgba(67, 209, 125, 0.24);
+  background: rgba(39, 174, 96, 0.12);
+  color: #c8f8d8;
+}
+
+.tabPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.panelGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metricStack {
+  display: grid;
+  gap: 10px;
+}
+
+.metricLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  color: var(--muted);
+}
+
+.metricLine strong {
+  color: var(--text);
+  text-align: right;
+}
+
+.roundSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.roundSummaryCard {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 8px;
+}
+
+.roundSummaryCard span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.roundSummaryCard strong {
+  font-size: 1.05rem;
+}
+
+.roundSummaryCard small,
+.roundSummaryCard p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.roundPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.roundDetailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sectionHeaderInline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.matchChoiceCard {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.matchChoiceCard strong {
+  font-size: 1.18rem;
+}
+
+.matchChoiceCard span {
+  color: #c8f8d8;
+}
+
+.matchChoiceCard p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.chipList,
+.caseList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip,
+.caseChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
 .calibrationGrid {
   display: grid;
   grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
@@ -546,6 +785,16 @@
   .calibrationGrid {
     grid-template-columns: 1fr;
   }
+
+  .masterStats,
+  .panelGrid,
+  .roundDetailGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .roundSummaryGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 840px) {
@@ -569,6 +818,12 @@
 
   .calibrationBucketMeta {
     grid-column: 1 / -1;
+  }
+
+  .masterHeader,
+  .sectionHeaderInline {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .heroHeader,
