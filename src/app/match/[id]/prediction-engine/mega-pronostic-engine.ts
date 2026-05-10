@@ -1,12 +1,26 @@
 import type { TicTacToeMatch } from '@/lib/tictactoe-data';
-import { analyzeBoard, analyzeLiveBoard, extractOddsFromMatch, parseBoards, predictPrematch, predictTicTacToe } from './index';
+import {
+  analyzeBoard,
+  analyzeLiveBoard,
+  extractOddsFromMatch,
+  getGameWinner,
+  getRoundWinners,
+  parseBoards,
+  predictPrematch,
+  predictTicTacToe,
+} from './index';
 import { buildUnifiedBetPrediction } from './unified-bet-engine';
+import { brierScore } from './scoring';
 import type {
   MegaPronostic,
   MegaPronosticAction,
   MegaPronosticChoice,
+  MegaPronosticDebug,
   MegaPronosticSource,
+  MegaPronosticDebug as MegaPronosticDebugType,
+  MegaPronosticRoundView,
   PredictionOutcome,
+  PredictionResult,
   UnifiedBetSignal,
 } from './types';
 
@@ -14,6 +28,7 @@ type MegaCandidate = {
   source: MegaPronosticSource;
   finalChoice: MegaPronosticChoice;
   label: string;
+  marketLabel: string;
   roundLabel: MegaPronostic['roundLabel'];
   confidence: number;
   probability: number;
@@ -25,21 +40,18 @@ type MegaCandidate = {
   odds?: number;
   megaScore?: number;
   choiceFamily: 'MATCH_1X2' | 'DOUBLE_CHANCE' | 'TOTAL' | 'HANDICAP' | 'UNKNOWN';
-  _boardStatus?: string;
-  _roundNumber?: 0 | 1 | 2 | 3;
-  _prediction?: unknown;
-  _sourceCandidate?: unknown;
-  _unified?: unknown;
+  roundScope: 'MATCH' | 'ROUND_1' | 'ROUND_2' | 'ROUND_3';
+  roundNumber: 0 | 1 | 2 | 3;
+  sourceTab: 'MATCH' | 'ROUND 1' | 'ROUND 2' | 'ROUND 3';
+  prediction?: PredictionResult;
+  unified?: ReturnType<typeof buildUnifiedBetPrediction>;
+  boardStatus?: string;
 };
 
 const DISCLAIMER: MegaPronostic['disclaimer'] = 'Analyse mathématique probabiliste — aucun gain garanti.';
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
-}
-
-function formatPercent(value: number) {
-  return `${Math.min(99, Math.max(0, Math.round(value)))}%`;
 }
 
 function getState(mode: string): MegaPronostic['state'] {
@@ -54,6 +66,18 @@ function getState(mode: string): MegaPronostic['state'] {
   return 'PREMATCH';
 }
 
+function getDisplayMode(state: MegaPronostic['state']): MegaPronosticDebug['displayMode'] {
+  if (state === 'FINISHED') {
+    return 'FINISHED';
+  }
+
+  if (state === 'LIVE') {
+    return 'LIVE';
+  }
+
+  return 'PREMATCH';
+}
+
 function getRoundLabel(index: 0 | 1 | 2 | 3) {
   if (index === 1) return '1 round';
   if (index === 2) return '2 round';
@@ -61,31 +85,12 @@ function getRoundLabel(index: 0 | 1 | 2 | 3) {
   return 'Match global';
 }
 
-function getChoiceLabel(choice: MegaPronosticChoice) {
-  switch (choice) {
-    case 'V1':
-      return 'V1';
-    case 'DRAW':
-      return 'DRAW';
-    case 'V2':
-      return 'V2';
-    case '1X':
-      return '1X';
-    case '12':
-      return '12';
-    case '2X':
-      return '2X';
-    case 'OVER':
-      return 'OVER';
-    case 'UNDER':
-      return 'UNDER';
-    case 'HANDICAP_V1':
-      return 'HANDICAP_V1';
-    case 'HANDICAP_V2':
-      return 'HANDICAP_V2';
-    default:
-      return 'ATTENDRE';
-  }
+function getMarketLabel(choiceFamily: MegaCandidate['choiceFamily']) {
+  if (choiceFamily === 'MATCH_1X2') return '1X2';
+  if (choiceFamily === 'DOUBLE_CHANCE') return 'Double chance';
+  if (choiceFamily === 'TOTAL') return 'Total';
+  if (choiceFamily === 'HANDICAP') return 'Handicap';
+  return 'Inconnu';
 }
 
 function getChoiceFamily(choice: MegaPronosticChoice): MegaCandidate['choiceFamily'] {
@@ -139,7 +144,60 @@ function getMatchingOdds(odds: { V1: number | null; X: number | null; V2: number
   }
 }
 
-function getRoundCandidates(match: TicTacToeMatch): MegaCandidate[] {
+function getVisibleLabel(choice: MegaPronosticChoice, roundLabel: MegaPronostic['roundLabel'], isWaiting: boolean) {
+  if (!isWaiting) {
+    return `${choice} — ${roundLabel}`;
+  }
+
+  if (choice === 'V1') return 'V1 / Crosses';
+  if (choice === 'V2') return 'V2 / Rounds';
+  if (choice === 'DRAW') return 'DRAW / Match global';
+  return `${choice} / ${roundLabel}`;
+}
+
+function getWaitingLabel(choice: MegaPronosticChoice) {
+  if (choice === 'V2') return 'V2 / Rounds';
+  if (choice === 'DRAW') return 'DRAW / Match global';
+  return 'V1 / Crosses';
+}
+
+function getThreats(cells: number[]) {
+  const lines = [
+    [0, 1, 2],
+    [3, 4, 5],
+    [6, 7, 8],
+    [0, 3, 6],
+    [1, 4, 7],
+    [2, 5, 8],
+    [0, 4, 8],
+    [2, 4, 6],
+  ];
+
+  const threats = new Set<string>();
+
+  lines.forEach((line) => {
+    const values = line.map((index) => cells[index] ?? 0);
+    const v1Count = values.filter((value) => value === 1).length;
+    const v2Count = values.filter((value) => value === 2).length;
+    const emptyCount = values.filter((value) => value === 0).length;
+
+    if (v1Count === 2 && emptyCount === 1) {
+      threats.add(`Menace V1 sur ${line.map((index) => index + 1).join('-')}`);
+    }
+
+    if (v2Count === 2 && emptyCount === 1) {
+      threats.add(`Menace V2 sur ${line.map((index) => index + 1).join('-')}`);
+    }
+  });
+
+  if (threats.size === 0) {
+    threats.add('Aucune menace immédiate');
+  }
+
+  return [...threats];
+}
+
+function getRoundViews(match: TicTacToeMatch): MegaPronosticRoundView[] {
   const odds = extractOddsFromMatch(match);
   const boards = parseBoards(match);
 
@@ -152,31 +210,36 @@ function getRoundCandidates(match: TicTacToeMatch): MegaCandidate[] {
     const probabilityMap = livePrediction.probabilities;
     const probability = probabilityMap ? Math.max(probabilityMap.V1, probabilityMap.X, probabilityMap.V2) * 100 : 0;
     const confidence = livePrediction.confidence;
-    const valueScore = confidence * 0.4 + topTwoMargin(probabilityMap) * 0.5 - (state === 'PREMATCH' ? 10 : state === 'LIVE' ? 4 : 100);
     const margin = topTwoMargin(probabilityMap);
     const choice = mapOutcome(livePrediction.prediction);
     const oddsValue = getMatchingOdds(odds, choice);
 
     return {
-      source: `ROUND_${roundNumber}` as MegaPronosticSource,
-      finalChoice: choice,
-      label:
-        choice === 'ATTENDRE'
-          ? `ATTENDRE — ${getRoundLabel(roundNumber)}`
-          : `${getChoiceLabel(choice)} — ${getRoundLabel(roundNumber)}`,
-      roundLabel: getRoundLabel(roundNumber),
-      confidence,
-      probability,
-      valueScore,
-      masterMargin: margin,
-      riskLevel: livePrediction.riskLevel === 'CRITICAL' ? 'HIGH' : livePrediction.riskLevel,
+      roundIndex: roundNumber,
       state,
+      board,
+      stateLabel: state,
+      oddsText: odds
+        ? `V1 ${odds.V1 ?? '—'} · X ${odds.X ?? '—'} · V2 ${odds.V2 ?? '—'}`
+        : '—',
+      probabilities: probabilityMap,
+      prediction: livePrediction.prediction,
+      minimaxOutcome: livePrediction.debug.minimaxOutcome,
+      confidence,
+      safetyMargin: margin,
+      riskLevel: livePrediction.riskLevel === 'CRITICAL' ? 'HIGH' : livePrediction.riskLevel,
       reason: livePrediction.reason,
-      odds: oddsValue,
-      choiceFamily: getChoiceFamily(choice),
-      _boardStatus: analysis.status,
-      _roundNumber: roundNumber,
-      _prediction: livePrediction,
+      threats: getThreats(board),
+      remainingCells: board
+        .map((value, cellIndex) => ({ value, cellIndex }))
+        .filter((cell) => cell.value === 0)
+        .map((cell) => String(cell.cellIndex + 1)),
+      continuations: board
+        .map((value, cellIndex) => ({ value, cellIndex }))
+        .filter((cell) => cell.value === 0)
+        .map((cell) => `Case ${cell.cellIndex + 1}`),
+      chosenOdds:
+        livePrediction.prediction !== 'ATTENDRE' && oddsValue !== undefined ? oddsValue.toFixed(2) : '—',
     };
   });
 }
@@ -188,15 +251,14 @@ function getMatchCandidate(match: TicTacToeMatch): MegaCandidate {
   const odds = extractOddsFromMatch(match);
   const probability = probabilityMap ? Math.max(probabilityMap.V1, probabilityMap.X, probabilityMap.V2) * 100 : 0;
   const margin = topTwoMargin(probabilityMap);
+  const choiceFamily = getChoiceFamily(choice);
 
   return {
-    source: 'MATCH' as const,
+    source: 'MATCH',
     finalChoice: choice,
-    label:
-      choice === 'ATTENDRE'
-        ? 'ATTENDRE — Match global'
-        : `${getChoiceLabel(choice)} — Match global`,
-    roundLabel: 'Match global' as const,
+    label: choice === 'ATTENDRE' ? 'V1 / Crosses' : `${choice} — Match global`,
+    marketLabel: getMarketLabel(choiceFamily),
+    roundLabel: 'Match global',
     confidence: prediction.confidence,
     probability,
     valueScore: prediction.confidence * 0.35 + margin * 0.45,
@@ -205,28 +267,62 @@ function getMatchCandidate(match: TicTacToeMatch): MegaCandidate {
     state: getState(prediction.mode),
     reason: prediction.reason,
     odds: getMatchingOdds(odds, choice),
-    choiceFamily: getChoiceFamily(choice),
-    _prediction: prediction,
+    choiceFamily,
+    roundScope: 'MATCH',
+    roundNumber: 0,
+    sourceTab: 'MATCH',
+    prediction,
+  };
+}
+
+function getRoundCandidate(match: TicTacToeMatch, roundIndex: 1 | 2 | 3): MegaCandidate {
+  const odds = extractOddsFromMatch(match);
+  const boards = parseBoards(match);
+  const board = boards[roundIndex - 1] ?? Array.from({ length: 9 }, () => 0);
+  const analysis = analyzeBoard(board);
+  const livePrediction = analysis.status === 'EMPTY' ? predictPrematch(odds) : analyzeLiveBoard(board, odds);
+  const probabilityMap = livePrediction.probabilities;
+  const choice = mapOutcome(livePrediction.prediction);
+  const probability = probabilityMap ? Math.max(probabilityMap.V1, probabilityMap.X, probabilityMap.V2) * 100 : 0;
+  const margin = topTwoMargin(probabilityMap);
+  const choiceFamily = getChoiceFamily(choice);
+  const state = getState(livePrediction.mode);
+
+  return {
+    source: `ROUND_${roundIndex}` as MegaPronosticSource,
+    finalChoice: choice,
+    label: choice === 'ATTENDRE' ? getVisibleLabel(choice, getRoundLabel(roundIndex), true) : `${choice} — ${getRoundLabel(roundIndex)}`,
+    marketLabel: getMarketLabel(choiceFamily),
+    roundLabel: getRoundLabel(roundIndex),
+    confidence: livePrediction.confidence,
+    probability,
+    valueScore: livePrediction.confidence * 0.4 + margin * 0.5 - (state === 'PREMATCH' ? 10 : state === 'LIVE' ? 4 : 100),
+    masterMargin: margin,
+    riskLevel: livePrediction.riskLevel === 'CRITICAL' ? 'HIGH' : livePrediction.riskLevel,
+    state,
+    reason: livePrediction.reason,
+    odds: getMatchingOdds(odds, choice),
+    choiceFamily,
+    roundScope: `ROUND_${roundIndex}`,
+    roundNumber: roundIndex,
+    sourceTab: `ROUND ${roundIndex}`,
+    prediction: livePrediction,
+    boardStatus: analysis.status,
   };
 }
 
 function getUnifiedCandidate(match: TicTacToeMatch): MegaCandidate {
   const unified = buildUnifiedBetPrediction(match);
   const best = unified.bestSignal;
-  const choice = best.choice === 'ATTENDRE' ? 'ATTENDRE' : best.choice as MegaPronosticChoice;
-  const family = getChoiceFamily(choice);
-  const roundNumber = best.roundNumber as 0 | 1 | 2 | 3;
-  const roundLabel = best.roundLabel;
-  const odds = best.odds;
+  const choice = best.choice === 'ATTENDRE' ? 'ATTENDRE' : (best.choice as MegaPronosticChoice);
+  const choiceFamily = getChoiceFamily(choice);
 
   return {
-    source: 'UNIFIED_BET' as const,
+    source: 'UNIFIED_BET',
     finalChoice: choice,
-    label:
-      choice === 'ATTENDRE'
-        ? `ATTENDRE — ${roundLabel}`
-        : `${best.label} — ${roundLabel}`,
-    roundLabel,
+    label: choice === 'ATTENDRE' ? 'V1 / Crosses' : `${best.choice} — ${best.roundLabel}`,
+    marketLabel: getMarketLabel(choiceFamily),
+    roundLabel: best.roundLabel,
     confidence: best.confidence,
     probability: best.probability,
     valueScore: best.valueScore,
@@ -234,10 +330,12 @@ function getUnifiedCandidate(match: TicTacToeMatch): MegaCandidate {
     riskLevel: best.riskLevel,
     state: best.state,
     reason: best.reason,
-    odds,
-    choiceFamily: family,
-    _roundNumber: roundNumber,
-    _unified: unified,
+    odds: best.odds,
+    choiceFamily,
+    roundScope: best.roundScope,
+    roundNumber: best.roundNumber,
+    sourceTab: best.roundScope === 'MATCH' ? 'MATCH' : `ROUND ${best.roundNumber}` as 'ROUND 1' | 'ROUND 2' | 'ROUND 3',
+    unified,
   };
 }
 
@@ -253,30 +351,33 @@ function buildMasterCandidate(matchCandidate: MegaCandidate, roundCandidates: Me
 
   if (!best) {
     return {
-      source: 'MASTER' as const,
-      finalChoice: 'ATTENDRE' as const,
-      label: 'Favori mathématique détecté : aucun signal clair',
-      roundLabel: 'Match global' as const,
+      source: 'MASTER',
+      finalChoice: 'ATTENDRE',
+      label: 'Favori detecte : V1 / Crosses',
+      marketLabel: '1X2',
+      roundLabel: 'Match global',
       confidence: matchCandidate.confidence,
       probability: matchCandidate.probability,
       valueScore: 0,
       masterMargin: 0,
-      riskLevel: 'HIGH' as const,
+      riskLevel: 'HIGH',
       state: matchCandidate.state,
-      reason: 'Aucun round clair ne se détache.',
+      reason: 'Aucun round clair ne se detache.',
       odds: undefined,
-      choiceFamily: 'UNKNOWN' as const,
-      _sourceCandidate: null,
+      choiceFamily: 'UNKNOWN',
+      roundScope: 'MATCH',
+      roundNumber: 0,
+      sourceTab: 'MATCH',
     };
   }
 
+  const visibleLabel = best.finalChoice === 'ATTENDRE' ? getVisibleLabel(best.finalChoice, best.roundLabel, true) : `${best.finalChoice} — ${best.roundLabel}`;
+
   return {
-    source: 'MASTER' as const,
+    source: 'MASTER',
     finalChoice: best.finalChoice,
-    label:
-      best.finalChoice === 'ATTENDRE'
-        ? `Favori mathématique détecté : ${best.label}`
-        : `${best.label}`,
+    label: visibleLabel,
+    marketLabel: best.marketLabel,
     roundLabel: best.roundLabel,
     confidence: best.confidence,
     probability: best.probability,
@@ -287,40 +388,221 @@ function buildMasterCandidate(matchCandidate: MegaCandidate, roundCandidates: Me
     reason: best.reason,
     odds: best.odds,
     choiceFamily: best.choiceFamily,
-    _sourceCandidate: best,
+    roundScope: best.roundScope,
+    roundNumber: best.roundNumber,
+    sourceTab: best.sourceTab,
   };
 }
 
-function toMegaPronostic(candidate: ReturnType<typeof getMatchCandidate> | ReturnType<typeof getUnifiedCandidate> | ReturnType<typeof buildMasterCandidate> | ReturnType<typeof getRoundCandidates>[number], megaScore: number, action: MegaPronosticAction): MegaPronostic {
-  const label =
-    candidate.finalChoice === 'ATTENDRE'
-      ? candidate.label
-      : `${candidate.label}`;
+function computeActualWinner(match: TicTacToeMatch): PredictionOutcome {
+  const boards = parseBoards(match);
+  const analyses = boards.map((board) => analyzeBoard(board));
+  const roundWinners = getRoundWinners(analyses);
+  const winner = getGameWinner(roundWinners);
+
+  if (winner !== 'ATTENDRE') {
+    return winner;
+  }
+
+  const raw = match.raw as TicTacToeMatch['raw'] & {
+    SC?: { FS?: { S1?: number; S2?: number } };
+  };
+  const s1 = raw.SC?.FS?.S1 ?? 0;
+  const s2 = raw.SC?.FS?.S2 ?? 0;
+
+  if (s1 > s2) return 'V1';
+  if (s2 > s1) return 'V2';
+  return 'X';
+}
+
+function computeCalibration(allMatches: TicTacToeMatch[], currentMatchId: number) {
+  const finishedMatches = allMatches.filter((item) => item.id !== currentMatchId && computeActualWinner(item) !== 'ATTENDRE');
+  const samples = finishedMatches.slice(-20).map((item) => {
+    const odds = extractOddsFromMatch(item);
+    const prematch = predictPrematch(odds);
+    return {
+      prediction: prematch,
+      result: {
+        winner: computeActualWinner(item) as Exclude<PredictionOutcome, 'ATTENDRE'>,
+      },
+    };
+  });
+
+  const buckets = new Map<
+    string,
+    {
+      samples: number;
+      hits: number;
+      confidenceSum: number;
+    }
+  >();
+
+  samples.forEach((sample) => {
+    const bucketStart = Math.floor(sample.prediction.confidence / 10) * 10;
+    const bucketEnd = Math.min(bucketStart + 9, 95);
+    const key = `${bucketStart}-${bucketEnd}`;
+    const current = buckets.get(key) ?? { samples: 0, hits: 0, confidenceSum: 0 };
+
+    current.samples += 1;
+    current.confidenceSum += sample.prediction.confidence;
+    if (sample.prediction.prediction === sample.result.winner) {
+      current.hits += 1;
+    }
+
+    buckets.set(key, current);
+  });
+
+  const rows = [...buckets.entries()]
+    .sort((a, b) => Number(a[0].split('-')[0]) - Number(b[0].split('-')[0]))
+    .map(([bucket, value]) => {
+      const expectedHits = (value.samples * value.confidenceSum) / (value.samples * 100);
+      const chiSquareContribution = expectedHits > 0 ? ((value.hits - expectedHits) ** 2) / expectedHits : 0;
+
+      return {
+        bucket,
+        samples: value.samples,
+        hits: value.hits,
+        meanConfidence: Math.round(value.confidenceSum / value.samples),
+        expectedHits,
+        chiSquareContribution,
+      };
+    });
 
   return {
+    brierScore: samples.length
+      ? brierScore(
+          samples.map((sample) => sample.prediction),
+          samples.map((sample) => sample.result),
+        )
+      : 0,
+    chiSquare: rows.reduce((sum, row) => sum + row.chiSquareContribution, 0),
+    degreesOfFreedom: Math.max(rows.length - 1, 0),
+    sampleCount: samples.length,
+    rows,
+  } satisfies MegaPronosticDebugType['calibration'];
+}
+
+function getRiskFlags(prediction: PredictionResult) {
+  return prediction.debug.riskFlags;
+}
+
+function buildMegaDebug(
+  match: TicTacToeMatch,
+  matchCandidate: MegaCandidate,
+  roundCandidates: MegaCandidate[],
+  unifiedPrediction: ReturnType<typeof buildUnifiedBetPrediction>,
+  masterCandidate: MegaCandidate,
+  allMatches: TicTacToeMatch[],
+): MegaPronosticDebug {
+  const prediction = matchCandidate.prediction ?? predictTicTacToe(match);
+  const roundViews = getRoundViews(match);
+  const finalWinner = computeActualWinner(match);
+  const displayMode = getDisplayMode(matchCandidate.state);
+  const odds = extractOddsFromMatch(match);
+  const calibration = computeCalibration(allMatches.length > 0 ? allMatches : [match], match.id);
+
+  return {
+    prediction,
+    displayMode,
+    riskFlags: getRiskFlags(prediction),
+    odds,
+    lastBoard: prediction.debug.lastBoard,
+    isLive: prediction.mode !== 'PREMATCH' && prediction.mode !== 'CONFIRMED',
+    finalWinner,
+    roundViews,
+    matchSummary: {
+      state: matchCandidate.state,
+      roundScore: roundCandidates
+        .map((candidate) => {
+          if (candidate.finalChoice === 'V1') return 'V1';
+          if (candidate.finalChoice === 'V2') return 'V2';
+          if (candidate.finalChoice === 'DRAW') return 'X';
+          return 'ATTENDRE';
+        })
+        .join(' / '),
+      potentialWinner:
+        finalWinner === 'V1' ? 'Victoire Croisillons' : finalWinner === 'V2' ? 'Victoire Ronds' : 'Match nul',
+      overallStatus: displayMode,
+      roundSummaries: roundCandidates.map((candidate) => ({
+        roundIndex: candidate.roundNumber,
+        state: candidate.state,
+        choice: candidate.finalChoice,
+        confidence: candidate.confidence,
+        riskLevel: candidate.riskLevel,
+        reason: candidate.reason,
+      })),
+    },
+    unifiedPrediction,
+    calibration,
+    masterSignal: {
+      choice: masterCandidate.label,
+      source: masterCandidate.roundLabel,
+      sourceTab: masterCandidate.sourceTab,
+      confidence: masterCandidate.confidence,
+      safetyMargin: Math.max(0, Math.round(masterCandidate.valueScore)),
+      riskLevel: masterCandidate.riskLevel,
+      reason: masterCandidate.reason,
+      oddsText: typeof masterCandidate.odds === 'number' ? masterCandidate.odds.toFixed(2) : '—',
+      state: masterCandidate.state,
+      disclaimer: unifiedPrediction.disclaimer,
+    },
+  };
+}
+
+function toMegaPronostic(candidate: MegaCandidate, megaScore: number, action: MegaPronosticAction, debug: MegaPronosticDebug): MegaPronostic {
+  return {
     finalChoice: candidate.finalChoice,
-    label,
+    label: candidate.label,
+    marketLabel: candidate.marketLabel,
     source: candidate.source,
     roundLabel: candidate.roundLabel,
     confidence: Math.min(99, Math.round(candidate.confidence)),
     probability: Math.min(99, Math.round(candidate.probability)),
     valueScore: Number(candidate.valueScore.toFixed(1)),
     masterMargin: Number(candidate.masterMargin.toFixed(1)),
+    megaScore: Number(megaScore.toFixed(1)),
     riskLevel: candidate.riskLevel,
     state: candidate.state,
     reason: candidate.reason,
     action,
     odds: candidate.odds,
     disclaimer: DISCLAIMER,
-    megaScore: Number(megaScore.toFixed(1)),
+    debug,
   };
 }
 
-export function buildMegaPronostic(match: TicTacToeMatch): MegaPronostic {
+export function calculateValueScore(signal: UnifiedBetSignal) {
+  if (signal.state === 'FINISHED') {
+    return -100;
+  }
+
+  const riskPenalty = signal.riskLevel === 'LOW' ? 0 : signal.riskLevel === 'MEDIUM' ? 8 : 18;
+  const uncertaintyPenalty = signal.state === 'PREMATCH' ? 10 : signal.state === 'LIVE' ? 4 : 100;
+
+  if (typeof signal.odds !== 'number' || !Number.isFinite(signal.odds) || signal.odds <= 0) {
+    return signal.probability * 0.2 + signal.confidence * 0.15 - riskPenalty - uncertaintyPenalty - 20;
+  }
+
+  const impliedProbability = 1 / signal.odds;
+  const edge = signal.probability / 100 - impliedProbability;
+  const edgePenalty = edge < 0 ? Math.abs(edge) * 120 : 0;
+
+  return edge * 100 + signal.confidence * 0.4 - riskPenalty - uncertaintyPenalty - edgePenalty;
+}
+
+export function buildMegaPronostic(match: TicTacToeMatch, allMatches: TicTacToeMatch[] = []): MegaPronostic {
   const matchCandidate = getMatchCandidate(match);
-  const roundCandidates = getRoundCandidates(match);
+  const roundCandidates = [1, 2, 3].map((round) => getRoundCandidate(match, round as 1 | 2 | 3));
   const unifiedCandidate = getUnifiedCandidate(match);
   const masterCandidate = buildMasterCandidate(matchCandidate, roundCandidates);
+  const debug = buildMegaDebug(
+    match,
+    matchCandidate,
+    roundCandidates,
+    unifiedCandidate.unified as ReturnType<typeof buildUnifiedBetPrediction>,
+    masterCandidate,
+    allMatches,
+  );
   const candidates = [masterCandidate, unifiedCandidate, matchCandidate, ...roundCandidates];
 
   const roundClear = roundCandidates.some(
@@ -334,22 +616,22 @@ export function buildMegaPronostic(match: TicTacToeMatch): MegaPronostic {
 
     return {
       finalChoice: 'ATTENDRE',
-      label: bestRound.finalChoice === 'ATTENDRE'
-        ? `Favori mathématique détecté : ${bestRound.label}`
-        : `Favori mathématique détecté : ${bestRound.label}`,
+      label: getWaitingLabel(matchCandidate.finalChoice),
+      marketLabel: bestRound.marketLabel,
       source: bestRound.source,
       roundLabel: bestRound.roundLabel,
       confidence: Math.min(99, Math.round(bestRound.confidence)),
       probability: Math.min(99, Math.round(bestRound.probability)),
       valueScore: Number(bestRound.valueScore.toFixed(1)),
       masterMargin: Number(bestRound.masterMargin.toFixed(1)),
+      megaScore: 0,
       riskLevel: bestRound.riskLevel,
       state: bestRound.state,
-      reason: 'Aucun round clair ne se détache encore.',
+      reason: 'Aucun round clair ne se detache encore.',
       action: 'ATTENDRE',
       odds: bestRound.odds,
       disclaimer: DISCLAIMER,
-      megaScore: 0,
+      debug,
     };
   }
 
@@ -358,15 +640,13 @@ export function buildMegaPronostic(match: TicTacToeMatch): MegaPronostic {
     .filter((candidate) => typeof candidate.odds === 'number' && Number.isFinite(candidate.odds))
     .filter((candidate) => candidate.state !== 'FINISHED')
     .map((candidate) => {
-      const riskPenalty = getRiskPenalty(candidate.riskLevel);
-      const statePenalty = getStatePenalty(candidate.state);
       const megaScore =
         candidate.valueScore +
         candidate.masterMargin +
         candidate.confidence * 0.3 +
         candidate.probability * 20 -
-        riskPenalty -
-        statePenalty;
+        getRiskPenalty(candidate.riskLevel) -
+        getStatePenalty(candidate.state);
 
       return {
         ...candidate,
@@ -388,43 +668,46 @@ export function buildMegaPronostic(match: TicTacToeMatch): MegaPronostic {
 
   const best = scored[0];
   if (!best) {
-    const fallback = matchCandidate;
     return {
       finalChoice: 'ATTENDRE',
-      label: `Favori mathématique détecté : ${fallback.label}`,
-      source: fallback.source,
-      roundLabel: fallback.roundLabel,
-      confidence: Math.min(99, Math.round(fallback.confidence)),
-      probability: Math.min(99, Math.round(fallback.probability)),
-      valueScore: Number(fallback.valueScore.toFixed(1)),
-      masterMargin: Number(fallback.masterMargin.toFixed(1)),
-      riskLevel: fallback.riskLevel,
-      state: fallback.state,
+      label: getWaitingLabel(matchCandidate.finalChoice),
+      marketLabel: '1X2',
+      source: 'MATCH',
+      roundLabel: 'Match global',
+      confidence: Math.min(99, Math.round(matchCandidate.confidence)),
+      probability: Math.min(99, Math.round(matchCandidate.probability)),
+      valueScore: Number(matchCandidate.valueScore.toFixed(1)),
+      masterMargin: Number(matchCandidate.masterMargin.toFixed(1)),
+      megaScore: 0,
+      riskLevel: matchCandidate.riskLevel,
+      state: matchCandidate.state,
       reason: 'Aucun signal exploitable.',
       action: 'ATTENDRE',
-      odds: fallback.odds,
+      odds: matchCandidate.odds,
       disclaimer: DISCLAIMER,
-      megaScore: 0,
+      debug,
     };
   }
 
   if (best.riskLevel === 'HIGH' && best.megaScore < 70) {
     return {
       finalChoice: 'ATTENDRE',
-      label: `Favori mathématique détecté : ${best.label}`,
+      label: getWaitingLabel(matchCandidate.finalChoice),
+      marketLabel: best.marketLabel,
       source: best.source,
       roundLabel: best.roundLabel,
       confidence: Math.min(99, Math.round(best.confidence)),
       probability: Math.min(99, Math.round(best.probability)),
       valueScore: Number(best.valueScore.toFixed(1)),
       masterMargin: Number(best.masterMargin.toFixed(1)),
+      megaScore: Number(best.megaScore.toFixed(1)),
       riskLevel: best.riskLevel,
       state: best.state,
-      reason: 'Risque élevé et score insuffisant pour recommander un pari.',
+      reason: 'Risque eleve et score insuffisant pour recommander un pari.',
       action: 'ATTENDRE',
       odds: best.odds,
       disclaimer: DISCLAIMER,
-      megaScore: Number(best.megaScore.toFixed(1)),
+      debug,
     };
   }
 
@@ -440,10 +723,7 @@ export function buildMegaPronostic(match: TicTacToeMatch): MegaPronostic {
   }
 
   const finalChoice = action === 'ATTENDRE' ? 'ATTENDRE' : best.finalChoice;
-  const label =
-    finalChoice === 'ATTENDRE'
-      ? `Favori mathématique détecté : ${best.label}`
-      : `${best.label}`;
+  const label = finalChoice === 'ATTENDRE' ? getVisibleLabel(best.finalChoice, best.roundLabel, true) : `${best.finalChoice} — ${best.roundLabel}`;
 
   return toMegaPronostic(
     {
@@ -453,9 +733,10 @@ export function buildMegaPronostic(match: TicTacToeMatch): MegaPronostic {
     },
     best.megaScore,
     action,
+    debug,
   );
 }
 
-export function MegaPronosticEngine(match: TicTacToeMatch): MegaPronostic {
-  return buildMegaPronostic(match);
+export function MegaPronosticEngine(match: TicTacToeMatch, allMatches: TicTacToeMatch[] = []): MegaPronostic {
+  return buildMegaPronostic(match, allMatches);
 }

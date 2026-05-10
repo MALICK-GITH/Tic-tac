@@ -155,13 +155,97 @@ export type MegaPronosticChoice =
   | 'HANDICAP_V2'
   | 'ATTENDRE';
 
-export type MegaPronosticSource = 'MATCH' | 'ROUND_1' | 'ROUND_2' | 'ROUND_3' | 'UNIFIED_BET' | 'MASTER';
+export type MegaPronosticSource =
+  | 'MATCH'
+  | 'ROUND_1'
+  | 'ROUND_2'
+  | 'ROUND_3'
+  | 'UNIFIED_BET'
+  | 'MASTER';
 
 export type MegaPronosticAction = 'ATTENDRE' | 'SIGNAL_FAIBLE' | 'SIGNAL_MOYEN' | 'SIGNAL_FORT';
+
+export type MegaPronosticCalibrationRow = {
+  bucket: string;
+  samples: number;
+  hits: number;
+  meanConfidence: number;
+  expectedHits: number;
+  chiSquareContribution: number;
+};
+
+export type MegaPronosticCalibration = {
+  brierScore: number;
+  chiSquare: number;
+  degreesOfFreedom: number;
+  sampleCount: number;
+  rows: MegaPronosticCalibrationRow[];
+};
+
+export type MegaPronosticRoundView = {
+  roundIndex: number;
+  state: UnifiedBetState;
+  board: number[];
+  stateLabel: UnifiedBetState;
+  oddsText: string;
+  probabilities: NormalizedProbabilities | null;
+  prediction: PredictionOutcome;
+  minimaxOutcome: PredictionOutcome | null;
+  confidence: number;
+  safetyMargin: number;
+  riskLevel: RiskLevel;
+  reason: string;
+  threats: string[];
+  remainingCells: string[];
+  continuations: string[];
+  chosenOdds: string;
+};
+
+export type MegaPronosticMatchSummary = {
+  state: UnifiedBetState;
+  roundScore: string;
+  potentialWinner: string;
+  overallStatus: string;
+  roundSummaries: Array<{
+    roundIndex: number;
+    state: UnifiedBetState;
+    choice: string;
+    confidence: number;
+    riskLevel: RiskLevel;
+    reason: string;
+  }>;
+};
+
+export type MegaPronosticDebug = {
+  prediction: PredictionResult;
+  displayMode: 'PREMATCH' | 'LIVE' | 'FINISHED';
+  riskFlags: RiskFlag[];
+  odds: OddsLine | null;
+  lastBoard: number[] | null;
+  isLive: boolean;
+  finalWinner: PredictionOutcome;
+  roundViews: MegaPronosticRoundView[];
+  matchSummary: MegaPronosticMatchSummary;
+  unifiedPrediction: UnifiedBetPrediction;
+  calibration: MegaPronosticCalibration;
+  masterSignal: {
+    choice: string;
+    source: string;
+    sourceTab: 'MATCH' | 'ROUND 1' | 'ROUND 2' | 'ROUND 3';
+    confidence: number;
+    safetyMargin: number;
+    riskLevel: RiskLevel;
+    reason: string;
+    oddsText: string;
+    state: UnifiedBetState;
+    disclaimer: string;
+  };
+};
 
 export type MegaPronostic = {
   finalChoice: MegaPronosticChoice;
   label: string;
+  marketLabel: string;
   source: MegaPronosticSource;
   roundLabel: 'Match global' | '1 round' | '2 round' | '3 round';
   confidence: number;
@@ -174,5 +258,6 @@ export type MegaPronostic = {
   reason: string;
   action: MegaPronosticAction;
   odds?: number;
-  disclaimer: 'Analyse mathématique probabiliste — aucun gain garanti.';
+  disclaimer: string;
+  debug: MegaPronosticDebug;
 };
