@@ -1,11 +1,11 @@
 import type { TicTacToeMatch } from '@/lib/tictactoe-data';
 import { analyzeBoard, analyzeLiveBoard, extractOddsFromMatch, getGameWinner, getRoundWinners, parseBoards, predictPrematch, predictTicTacToe } from './prediction-engine';
+import { buildUnifiedBetPrediction } from './prediction-engine/unified-bet-engine';
 import { brierScore } from './prediction-engine/scoring';
 import type { PredictionOutcome } from './prediction-engine/types';
 import {
   MatchDashboardTabs,
   type DashboardMatchSummary,
-  type DashboardMasterSignal,
   type DashboardRoundView,
   type DashboardState,
   type DashboardTab,
@@ -155,13 +155,6 @@ function getSafetyMargin(probabilities: { V1: number; X: number; V2: number } | 
   return Math.round((top - runnerUp) * 100);
 }
 
-function getChoiceLabel(outcome: PredictionOutcome) {
-  if (outcome === 'V1') return 'Victoire Croisillons';
-  if (outcome === 'V2') return 'Victoire Ronds';
-  if (outcome === 'X') return 'Match nul';
-  return 'ATTENDRE';
-}
-
 function getStateFromBoardStatus(status: ReturnType<typeof analyzeBoard>['status']): DashboardState {
   if (status === 'WIN' || status === 'DRAW') return 'FINISHED';
   if (status === 'LIVE') return 'LIVE';
@@ -222,75 +215,6 @@ function formatOddsText(odds: { V1: number | null; X: number | null; V2: number 
 
   const parts = (['V1', 'X', 'V2'] as const).map((key) => `${key} ${formatPrice(odds[key])}`);
   return parts.join(' · ');
-}
-
-function chooseMasterSignal(candidates: Array<{
-  tab: DashboardTab;
-  source: string;
-  state: DashboardState;
-  prediction: PredictionOutcome;
-  confidence: number;
-  probabilities: { V1: number; X: number; V2: number } | null;
-  riskLevel: string;
-  reason: string;
-  odds: { V1: number | null; X: number | null; V2: number | null } | null;
-}>) {
-  const scored = candidates
-    .map((candidate) => {
-      const safetyMargin = getSafetyMargin(candidate.probabilities);
-      const riskPenalty =
-        candidate.riskLevel === 'CRITICAL'
-          ? 30
-          : candidate.riskLevel === 'HIGH'
-            ? 18
-            : candidate.riskLevel === 'MEDIUM'
-              ? 8
-              : 0;
-      const stateBonus = candidate.state === 'FINISHED' ? 6 : candidate.state === 'LIVE' ? 3 : 0;
-      const score = candidate.confidence + safetyMargin + stateBonus - riskPenalty;
-
-      return {
-        ...candidate,
-        safetyMargin,
-        score,
-      };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  const best = scored[0];
-  const focusTab =
-    best?.tab === 'MATCH' ? scored.find((candidate) => candidate.tab !== 'MATCH')?.tab ?? 'MATCH' : best.tab;
-
-  if (!best || best.safetyMargin < 8 || best.confidence < 45 || best.riskLevel === 'HIGH' || best.riskLevel === 'CRITICAL') {
-    return {
-      choice: 'ATTENDRE',
-      source: 'Signal trop fragile',
-      sourceTab: focusTab ?? ('MATCH' as DashboardTab),
-      confidence: best ? Math.min(99, best.confidence) : 0,
-      safetyMargin: best?.safetyMargin ?? 0,
-      riskLevel: (best?.riskLevel ?? 'HIGH') as DashboardMasterSignal['riskLevel'],
-      reason: 'Marge trop faible ou risque trop élevé, le système estime qu’il faut attendre.',
-      oddsText: '—',
-      state: best?.state ?? 'PREMATCH',
-      disclaimer: 'Jeu virtuel RNG — signal probabiliste, aucun gain garanti.',
-    };
-  }
-
-  const choice = best.prediction === 'ATTENDRE' ? 'ATTENDRE' : formatOutcomeLabel(best.prediction);
-  const oddsValue = best.prediction === 'ATTENDRE' || !best.odds ? null : best.odds[best.prediction];
-
-  return {
-    choice,
-    source: best.source,
-    sourceTab: focusTab ?? best.tab,
-    confidence: Math.min(99, best.confidence),
-    safetyMargin: best.safetyMargin,
-    riskLevel: best.riskLevel as DashboardMasterSignal['riskLevel'],
-    reason: best.reason,
-    oddsText: oddsValue !== null && oddsValue !== undefined ? formatPrice(oddsValue) : '—',
-    state: best.state,
-    disclaimer: 'Jeu virtuel RNG — signal probabiliste, aucun gain garanti.',
-  };
 }
 
 function computeCalibrationChiSquare(
@@ -420,6 +344,8 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
     };
   });
 
+  const unifiedPrediction = buildUnifiedBetPrediction(match);
+
   const matchSummary: DashboardMatchSummary = {
     state: mapDashboardState(prediction.mode),
     roundScore: roundAnalyses
@@ -440,31 +366,6 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
       reason: round.reason,
     })),
   };
-
-  const masterSignal = chooseMasterSignal([
-    {
-      tab: 'MATCH',
-      source: 'Match global',
-      state: mapDashboardState(prediction.mode),
-      prediction: prediction.prediction,
-      confidence: prediction.confidence,
-      probabilities: prediction.probabilities,
-      riskLevel: prediction.riskLevel,
-      reason: prediction.reason,
-      odds,
-    },
-    ...roundViews.map((round) => ({
-      tab: round.tab,
-      source: `Round ${round.roundIndex}`,
-      state: round.state,
-      prediction: round.prediction,
-      confidence: round.confidence,
-      probabilities: round.probabilities,
-      riskLevel: round.riskLevel,
-      reason: round.reason,
-      odds,
-    })),
-  ]);
 
   const finishedMatches = allMatches.filter((item) => {
     const winner = getActualWinner(item);
@@ -563,19 +464,29 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
 
         <MatchDashboardTabs
           master={{
-            choice: masterSignal.choice,
-            source: masterSignal.source,
-            sourceTab: masterSignal.sourceTab,
-            confidence: masterSignal.confidence,
-            safetyMargin: masterSignal.safetyMargin,
-            riskLevel: masterSignal.riskLevel,
-            reason: masterSignal.reason,
-            oddsText: masterSignal.oddsText,
-            state: masterSignal.state,
-            disclaimer: masterSignal.disclaimer,
+            choice: unifiedPrediction.bestSignal.label,
+            source: unifiedPrediction.bestSignal.roundLabel,
+            sourceTab: unifiedPrediction.bestSignal.roundScope === 'MATCH'
+              ? 'MATCH'
+              : unifiedPrediction.bestSignal.roundScope === 'ROUND_1'
+                ? 'ROUND 1'
+                  : unifiedPrediction.bestSignal.roundScope === 'ROUND_2'
+                    ? 'ROUND 2'
+                    : 'ROUND 3',
+            confidence: unifiedPrediction.bestSignal.confidence,
+            safetyMargin: Math.max(0, Math.round(unifiedPrediction.bestSignal.valueScore)),
+            riskLevel: unifiedPrediction.bestSignal.riskLevel,
+            reason: unifiedPrediction.bestSignal.reason,
+            oddsText:
+              typeof unifiedPrediction.bestSignal.odds === 'number'
+                ? unifiedPrediction.bestSignal.odds.toFixed(2)
+                : '—',
+            state: unifiedPrediction.bestSignal.state,
+            disclaimer: unifiedPrediction.disclaimer,
           }}
           matchSummary={matchSummary}
           rounds={roundViews}
+          unifiedPrediction={unifiedPrediction}
         />
 
         <section className={styles.section}>

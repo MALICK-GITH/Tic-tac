@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { NormalizedProbabilities, PredictionOutcome, RiskLevel } from './prediction-engine/types';
+import type { UnifiedBetPrediction } from './prediction-engine/types';
 import styles from './detail-prediction.module.css';
 
 export type DashboardState = 'PREMATCH' | 'LIVE' | 'FINISHED';
@@ -59,6 +60,7 @@ export type DashboardTabsProps = {
   master: DashboardMasterSignal;
   matchSummary: DashboardMatchSummary;
   rounds: DashboardRoundView[];
+  unifiedPrediction: UnifiedBetPrediction;
 };
 
 function formatPercent(value: number) {
@@ -77,7 +79,25 @@ function boardCellClass(value: number) {
   return `${styles.cell} ${styles.cellEmpty}`;
 }
 
-export function MatchDashboardTabs({ master, matchSummary, rounds }: DashboardTabsProps) {
+function getMarketLabel(marketType: UnifiedBetPrediction['bestSignal']['marketType']) {
+  switch (marketType) {
+    case 'MATCH_1X2':
+    case 'ROUND_1_1X2':
+    case 'ROUND_2_1X2':
+    case 'ROUND_3_1X2':
+      return '1X2';
+    case 'DOUBLE_CHANCE':
+      return 'Double chance';
+    case 'TOTAL':
+      return 'Total';
+    case 'HANDICAP':
+      return 'Handicap';
+    default:
+      return 'Inconnu';
+  }
+}
+
+export function MatchDashboardTabs({ master, matchSummary, rounds, unifiedPrediction }: DashboardTabsProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('MATCH');
 
   const activeRound = rounds.find((round) => round.tab === activeTab) ?? rounds[0];
@@ -143,6 +163,68 @@ export function MatchDashboardTabs({ master, matchSummary, rounds }: DashboardTa
       <div className={styles.tabPanel}>
         {activeTab === 'MATCH' ? (
           <div className={styles.matchPanel}>
+            <article className={`${styles.analysisCard} ${styles.unifiedCard}`}>
+              <div className={styles.sectionHeaderInline}>
+                <div>
+                  <h4>🎯 Pari unifié du système</h4>
+                  <p className={styles.mutedText}>
+                    Le moteur choisit le meilleur signal exploitable parmi les marchés actifs.
+                  </p>
+                </div>
+                <span className={styles.calibrationChip}>{unifiedPrediction.recommendation}</span>
+              </div>
+
+              <div className={styles.unifiedHero}>
+                <strong>
+                  Meilleur choix : {unifiedPrediction.bestSignal.choice} — {unifiedPrediction.bestSignal.roundLabel}
+                </strong>
+                <span>Marché : {getMarketLabel(unifiedPrediction.bestSignal.marketType)}</span>
+              </div>
+
+              <div className={styles.panelGrid}>
+                <div className={styles.metricLine}>
+                  <span>Source</span>
+                  <strong>{unifiedPrediction.bestSignal.source}</strong>
+                </div>
+                <div className={styles.metricLine}>
+                  <span>Cote</span>
+                  <strong>
+                    {typeof unifiedPrediction.bestSignal.odds === 'number'
+                      ? unifiedPrediction.bestSignal.odds.toFixed(2)
+                      : '—'}
+                  </strong>
+                </div>
+                <div className={styles.metricLine}>
+                  <span>Probabilité estimée</span>
+                  <strong>{Math.round(unifiedPrediction.bestSignal.probability)}%</strong>
+                </div>
+                <div className={styles.metricLine}>
+                  <span>Confiance</span>
+                  <strong>{Math.round(unifiedPrediction.bestSignal.confidence)}%</strong>
+                </div>
+                <div className={styles.metricLine}>
+                  <span>Value Score</span>
+                  <strong>{unifiedPrediction.bestSignal.valueScore.toFixed(1)}</strong>
+                </div>
+                <div className={styles.metricLine}>
+                  <span>Risque</span>
+                  <strong>{unifiedPrediction.bestSignal.riskLevel}</strong>
+                </div>
+                <div className={styles.metricLine}>
+                  <span>Recommandation</span>
+                  <strong>{unifiedPrediction.recommendation}</strong>
+                </div>
+                <div className={styles.metricLine}>
+                  <span>État</span>
+                  <strong>{unifiedPrediction.bestSignal.state}</strong>
+                </div>
+              </div>
+
+              <p className={styles.masterReason}>Résumé : {unifiedPrediction.summary}</p>
+              <p className={styles.masterReason}>Raison : {unifiedPrediction.bestSignal.reason}</p>
+              <p className={styles.masterDisclaimer}>{unifiedPrediction.disclaimer}</p>
+            </article>
+
             <div className={styles.panelGrid}>
               <article className={`${styles.analysisCard} ${styles.matchSummaryCard}`}>
                 <h4>État général</h4>

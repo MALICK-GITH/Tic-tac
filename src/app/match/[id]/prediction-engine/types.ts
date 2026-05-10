@@ -85,3 +85,59 @@ export type PredictionSample = {
 };
 
 export type MatchLike = TicTacToeMatch;
+
+export type UnifiedBetRoundScope = 'MATCH' | 'ROUND_1' | 'ROUND_2' | 'ROUND_3';
+
+export type UnifiedBetMarketType =
+  | 'MATCH_1X2'
+  | 'ROUND_1_1X2'
+  | 'ROUND_2_1X2'
+  | 'ROUND_3_1X2'
+  | 'DOUBLE_CHANCE'
+  | 'TOTAL'
+  | 'HANDICAP'
+  | 'UNKNOWN';
+
+export type UnifiedBetChoice =
+  | 'V1'
+  | 'DRAW'
+  | 'V2'
+  | '1X'
+  | '12'
+  | '2X'
+  | 'OVER'
+  | 'UNDER'
+  | 'HANDICAP_V1'
+  | 'HANDICAP_V2'
+  | 'ATTENDRE';
+
+export type UnifiedBetState = 'PREMATCH' | 'LIVE' | 'FINISHED';
+
+export type UnifiedBetRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export type UnifiedBetSignal = {
+  marketType: UnifiedBetMarketType;
+  roundScope: UnifiedBetRoundScope;
+  roundNumber: 0 | 1 | 2 | 3;
+  roundLabel: 'Match global' | '1 round' | '2 round' | '3 round';
+  source: 'MATCH' | 'ROUND_1' | 'ROUND_2' | 'ROUND_3';
+  choice: UnifiedBetChoice;
+  label: string;
+  odds?: number;
+  line?: number;
+  probability: number;
+  confidence: number;
+  valueScore: number;
+  riskLevel: UnifiedBetRiskLevel;
+  reason: string;
+  state: UnifiedBetState;
+};
+
+export type UnifiedBetPrediction = {
+  bestSignal: UnifiedBetSignal;
+  alternatives: UnifiedBetSignal[];
+  globalRisk: UnifiedBetRiskLevel;
+  recommendation: 'JOUER_PRUDENT' | 'JOUER_FAIBLE' | 'ATTENDRE' | 'MARCHE_DANGEREUX';
+  summary: string;
+  disclaimer: string;
+};
