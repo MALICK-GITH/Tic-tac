@@ -141,3 +141,38 @@ export type UnifiedBetPrediction = {
   summary: string;
   disclaimer: string;
 };
+
+export type MegaPronosticChoice =
+  | 'V1'
+  | 'DRAW'
+  | 'V2'
+  | '1X'
+  | '12'
+  | '2X'
+  | 'OVER'
+  | 'UNDER'
+  | 'HANDICAP_V1'
+  | 'HANDICAP_V2'
+  | 'ATTENDRE';
+
+export type MegaPronosticSource = 'MATCH' | 'ROUND_1' | 'ROUND_2' | 'ROUND_3' | 'UNIFIED_BET' | 'MASTER';
+
+export type MegaPronosticAction = 'ATTENDRE' | 'SIGNAL_FAIBLE' | 'SIGNAL_MOYEN' | 'SIGNAL_FORT';
+
+export type MegaPronostic = {
+  finalChoice: MegaPronosticChoice;
+  label: string;
+  source: MegaPronosticSource;
+  roundLabel: 'Match global' | '1 round' | '2 round' | '3 round';
+  confidence: number;
+  probability: number;
+  valueScore: number;
+  masterMargin: number;
+  megaScore: number;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  state: UnifiedBetState;
+  reason: string;
+  action: MegaPronosticAction;
+  odds?: number;
+  disclaimer: 'Analyse mathématique probabiliste — aucun gain garanti.';
+};

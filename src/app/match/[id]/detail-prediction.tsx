@@ -1,8 +1,10 @@
 import type { TicTacToeMatch } from '@/lib/tictactoe-data';
 import { analyzeBoard, analyzeLiveBoard, extractOddsFromMatch, getGameWinner, getRoundWinners, parseBoards, predictPrematch, predictTicTacToe } from './prediction-engine';
+import { MegaPronosticEngine } from './prediction-engine/mega-pronostic-engine';
 import { buildUnifiedBetPrediction } from './prediction-engine/unified-bet-engine';
 import { brierScore } from './prediction-engine/scoring';
 import type { PredictionOutcome } from './prediction-engine/types';
+import { MegaPronosticPanel } from './mega-pronostic-panel';
 import {
   MatchDashboardTabs,
   type DashboardMatchSummary,
@@ -345,6 +347,7 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
   });
 
   const unifiedPrediction = buildUnifiedBetPrediction(match);
+  const megaPronostic = MegaPronosticEngine(match);
 
   const matchSummary: DashboardMatchSummary = {
     state: mapDashboardState(prediction.mode),
@@ -408,7 +411,13 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
   const displayMode = getDisplayMode(prediction.mode);
 
   return (
-    <div className={styles.layout}>
+    <div className={styles.detailRoot}>
+      <MegaPronosticPanel pronostic={megaPronostic} />
+
+      <details className={styles.advancedDetails}>
+        <summary className={styles.advancedSummary}>Voir analyse avancée</summary>
+        <div className={styles.advancedContent}>
+          <div className={styles.layout}>
       <div className={styles.main}>
         <section className={`${styles.card} ${styles.hero}`}>
           <div className={styles.heroHeader}>
@@ -740,6 +749,9 @@ export function DetailPrediction({ match, allMatches }: DetailPredictionProps) {
           </p>
         </section>
       </aside>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

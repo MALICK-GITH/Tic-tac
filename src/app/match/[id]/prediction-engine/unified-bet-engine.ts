@@ -283,7 +283,7 @@ function buildSignal(params: {
   };
 }
 
-function calculateValueScoreInternal(signal: UnifiedBetSignal) {
+export function calculateValueScore(signal: UnifiedBetSignal) {
   if (signal.state === 'FINISHED') {
     return -100;
   }
@@ -514,7 +514,7 @@ export function selectBestUnifiedBet(signals: UnifiedBetSignal[]) {
     .filter((signal) => signal.confidence >= 45)
     .map((signal) => ({
       ...signal,
-      valueScore: calculateValueScoreInternal(signal),
+      valueScore: calculateValueScore(signal),
     }))
     .filter((signal) => signal.valueScore >= 0)
     .sort((a, b) => {
